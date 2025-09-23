@@ -4,6 +4,7 @@ import { SplashScreen } from 'expo-router';
 import React, { useEffect } from 'react';
 import { StatusBar } from 'react-native';
 import { Colors } from './constants/colors';
+import { BLEProvider } from './context/BLEContext';
 import ThemeProvider, { useTheme } from './hooks/useTheme';
 import Disconnect from './screens/Disconnect';
 import Monitor from './screens/Monitor';
@@ -61,7 +62,11 @@ function Root() {
     SplashScreen.hide();
   }, [])
 
-  return <Navigation />
+  return (
+    <BLEProvider>
+      <Navigation />
+    </BLEProvider>
+  )
 }
 
 export default function App() {
