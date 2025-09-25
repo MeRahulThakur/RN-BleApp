@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 type MockDevice = {
@@ -25,6 +26,12 @@ type BLEContextType = {
 
 const BLEContext = createContext<BLEContextType | null>(null);
 
+const STORAGE_KEYS = {
+  MAX_RETRIES: 'ble_maxRetries',
+  RETRY_DELAY: 'ble_retryDelay',
+};
+
+
 export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [devices, setDevices] = useState<MockDevice[]>([]);
   const [connectedDevice, setConnectedDevice] = useState<MockDevice | null>(null);
@@ -32,8 +39,38 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
 
-  const [maxRetries, setMaxRetries] = useState<number>(3);
-  const [retryDelay, setRetryDelay] = useState<number>(3000);
+  const [maxRetries, setMaxRetriesState] = useState<number>(3);
+  const [retryDelay, setRetryDelayState] = useState<number>(3000);
+
+  // Load settings on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedRetries = await AsyncStorage.getItem(STORAGE_KEYS.MAX_RETRIES);
+        const savedDelay = await AsyncStorage.getItem(STORAGE_KEYS.RETRY_DELAY);
+
+        if (savedRetries) setMaxRetriesState(Number(savedRetries));
+        if (savedDelay) setRetryDelayState(Number(savedDelay));
+      } catch (e) {
+        console.error("Failed to load BLE settings", e);
+      }
+    })();
+  }, []);
+
+  // Save settings when changed
+  const setMaxRetries = (n: number) => {
+    setMaxRetriesState(n);
+    AsyncStorage.setItem(STORAGE_KEYS.MAX_RETRIES, String(n)).catch(err =>
+      console.error("Save maxRetries failed", err)
+    );
+  };
+
+  const setRetryDelay = (ms: number) => {
+    setRetryDelayState(ms);
+    AsyncStorage.setItem(STORAGE_KEYS.RETRY_DELAY, String(ms)).catch(err =>
+      console.error("Save retryDelay failed", err)
+    );
+  };
 
   // --- Fake scanner ---
   const startScan = () => {
