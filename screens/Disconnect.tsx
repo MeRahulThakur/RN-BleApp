@@ -1,14 +1,22 @@
 // src/screens/DisconnectScreen.tsx
 import { ParamListBase, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Button, Text, View } from 'react-native';
 import { useBLE } from '../context/BLEContext';
 
 export default function DisconnectScreen() {
+  const {connectedDevice} = useBLE()
   const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
   const { retryConnection } = useBLE();
   const [loading, setLoading] = useState(false);
+
+  //Navigate to Monitor screen if reconnect is successful
+  useEffect(() => {
+    if (connectedDevice) {
+      navigation.replace("Monitor");
+    }
+  }, [connectedDevice, navigation]);
 
   const handleRetry = async () => {
     setLoading(true);
