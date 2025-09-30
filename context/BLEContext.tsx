@@ -133,7 +133,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // mock 50% chance to succeed
       if (Math.random() > 0.5) {
-        console.log('✅ Reconnected successfully');
+        console.log("Reconnected successfully");
         setConnectedDevice(lastDevice);
         setIsDisconnected(false);
         console.log("Mock auto-reconnect success");
@@ -167,6 +167,11 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       charUUID: string,
       callback: (value: string) => void
     ): (() => void) | null => {
+      if (!connectedDevice) {
+        console.warn("No device connected for subscription");
+        return null;
+      }
+
       const key = `${serviceUUID}-${charUUID}`;
 
       if (activeSubscriptions.current[key] != null) {
@@ -190,7 +195,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       };
     },
-    []
+    [connectedDevice]
   );
 
   // --- Simulate random disconnects + auto-reconnect ---
