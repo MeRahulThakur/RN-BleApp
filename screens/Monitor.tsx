@@ -5,7 +5,7 @@ import { ParamListBase, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text } from 'react-native';
-import { useBLE } from '../context/BLEContext';
+import { useBLE } from '../context/BLEContextM';
 
 export default function Monitor() {
   const { connectedDevice, subscribeToCharacteristic, isDisconnected, disconnectDevice } = useBLE();

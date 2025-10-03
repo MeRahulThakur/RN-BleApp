@@ -3,7 +3,7 @@ import { ParamListBase, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useState } from 'react';
 import { Alert, Button, Text, TextInput, View } from 'react-native';
-import { useBLE } from '../context/BLEContext';
+import { useBLE } from '../context/BLEContextM';
 
 export default function Settings() {
   const { maxRetries, retryDelay, setMaxRetries, setRetryDelay } = useBLE();
