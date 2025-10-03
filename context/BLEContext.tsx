@@ -1,16 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { getRandomParts, mokedScannedDevices } from './mockData';
-
-type MockDevice = {
-  id: string;
-  name: string;
-};
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { BleManager, Characteristic, Device, Subscription } from 'react-native-ble-plx';
 
 type BLEContextType = {
-  devices: MockDevice[];
-  connectedDevice: MockDevice | null;
-  lastDevice: MockDevice | null;
+  devices: Device[];
+  connectedDevice: Device | null;
+  lastDevice: Device | null;
   isDisconnected: boolean;
   isScanning: boolean;
   maxRetries: number;
@@ -19,8 +21,8 @@ type BLEContextType = {
   setRetryDelay: (ms: number) => void;
   startScan: () => void;
   stopScan: () => void;
-  connectToDevice: (device: MockDevice) => Promise<MockDevice | null>;
-  retryConnection: () => Promise<MockDevice | null>;
+  connectToDevice: (device: Device) => Promise<Device | null>;
+  retryConnection: () => Promise<Device | null>;
   readCharacteristic: (serviceUUID: string, charUUID: string) => Promise<string | null>;
   subscribeToCharacteristic: (
     serviceUUID: string,
@@ -37,190 +39,214 @@ const STORAGE_KEYS = {
   RETRY_DELAY: 'ble_retryDelay',
 };
 
+const manager = new BleManager();
 
 export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [devices, setDevices] = useState<MockDevice[]>([]);
-  const [connectedDevice, setConnectedDevice] = useState<MockDevice | null>(null);
-  const [lastDevice, setLastDevice] = useState<MockDevice | null>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [lastDevice, setLastDevice] = useState<Device | null>(null);
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
 
   const [maxRetries, setMaxRetriesState] = useState<number>(3);
   const [retryDelay, setRetryDelayState] = useState<number>(3000);
 
-  const activeSubscriptions = useRef<Record<string, number>>({});
+  const activeSubscriptions = useRef<Record<string, Subscription>>({});
 
-  // Load reconnect settings on mount
+  // --- Cleanup Subscriptions ---
+  const cleanupSubscriptions = useCallback(() => {
+    Object.values(activeSubscriptions.current).forEach((sub) => sub.remove());
+    activeSubscriptions.current = {};
+  }, []);
+
+  // Load retry settings from storage
   useEffect(() => {
     (async () => {
       try {
         const savedRetries = await AsyncStorage.getItem(STORAGE_KEYS.MAX_RETRIES);
         const savedDelay = await AsyncStorage.getItem(STORAGE_KEYS.RETRY_DELAY);
-
         if (savedRetries) setMaxRetriesState(Number(savedRetries));
         if (savedDelay) setRetryDelayState(Number(savedDelay));
       } catch (e) {
-        console.error("Failed to load BLE settings", e);
+        console.error('Failed to load BLE settings', e);
       }
     })();
   }, []);
 
-  // Save reconnect settings
+  // Save settings to storage
   const setMaxRetries = (n: number) => {
     setMaxRetriesState(n);
-    AsyncStorage.setItem(STORAGE_KEYS.MAX_RETRIES, String(n)).catch(err =>
-      console.error("Save maxRetries failed", err)
+    AsyncStorage.setItem(STORAGE_KEYS.MAX_RETRIES, String(n)).catch((err) =>
+      console.error('Save maxRetries failed', err)
     );
   };
 
   const setRetryDelay = (ms: number) => {
     setRetryDelayState(ms);
-    AsyncStorage.setItem(STORAGE_KEYS.RETRY_DELAY, String(ms)).catch(err =>
-      console.error("Save retryDelay failed", err)
+    AsyncStorage.setItem(STORAGE_KEYS.RETRY_DELAY, String(ms)).catch((err) =>
+      console.error('Save retryDelay failed', err)
     );
   };
 
-  // --- Fake scanner ---
+  // --- Scan for devices ---
   const startScan = useCallback(() => {
-    console.log("Mock scanning started...");
     setIsScanning(true);
-    setDevices([]); // clear previous devices
+    setDevices([]);
 
-    setTimeout(() => {
-      setDevices(mokedScannedDevices);
-      setIsScanning(false);
-    }, 2000); // fake delay
+    manager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.error('Scan error:', error);
+        setIsScanning(false);
+        return;
+      }
+      if (device && device.name) {
+        setDevices((prev) => {
+          if (prev.find((d) => d.id === device.id)) return prev;
+          return [...prev, device];
+        });
+      }
+    });
   }, []);
 
   const stopScan = useCallback(() => {
-    console.log("Mock scanning stopped.");
+    manager.stopDeviceScan();
     setIsScanning(false);
   }, []);
 
-  // --- Fake connect ---
-  const connectToDevice = useCallback(async (device: MockDevice) => {
-    console.log(`Mock connecting to ${device.name}...`);
-    return new Promise<MockDevice>((resolve) => {
-      setTimeout(() => {
-        setConnectedDevice(device);
-        setLastDevice(device);
-        setIsDisconnected(false);
-        console.log(`Connected to ${device.name}`);
-        resolve(device);
-      }, 1000);
-    });
+  // --- Connect ---
+  const connectToDevice = useCallback(async (device: Device) => {
+    try {
+      const connected = await manager.connectToDevice(device.id, { timeout: 10000 });
+      await connected.discoverAllServicesAndCharacteristics();
+      setConnectedDevice(connected);
+      setLastDevice(connected);
+      setIsDisconnected(false);
+      return connected;
+    } catch (err) {
+      console.error('Connect error:', err);
+      return null;
+    }
   }, []);
 
   const disconnectDevice = useCallback(async () => {
-    console.log("Mock disconnecting device...");
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        console.log('Disconnected manually');
+    if (connectedDevice) {
+      try {
+        cleanupSubscriptions();
+        await manager.cancelDeviceConnection(connectedDevice.id);
         setConnectedDevice(null);
         setIsDisconnected(true);
-        resolve();
-      }, 500);
-    });
-  }, []);
+      } catch (err) {
+        console.error('Disconnect error:', err);
+      }
+    }
+  }, [connectedDevice, cleanupSubscriptions]);
 
-  // --- Retry connection logic ---
+  // --- Retry connection ---
   const retryConnection = useCallback(async () => {
     if (!lastDevice) return null;
 
     for (let i = 0; i < maxRetries; i++) {
-      console.log(`Retry attempt ${i + 1}/${maxRetries}`);
-      await new Promise(res => setTimeout(res, retryDelay));
-
-      // mock 50% chance to succeed
-      if (Math.random() > 0.5) {
-        console.log("Reconnected successfully");
-        setConnectedDevice(lastDevice);
+      console.log(`Reconnect attempt ${i + 1}/${maxRetries}`);
+      await new Promise((res) => setTimeout(res, retryDelay));
+      try {
+        const connected = await manager.connectToDevice(lastDevice.id, { timeout: 10000 });
+        await connected.discoverAllServicesAndCharacteristics();
+        setConnectedDevice(connected);
         setIsDisconnected(false);
-        console.log("Mock auto-reconnect success");
-        return lastDevice;
+        return connected;
+      } catch (e) {
+        console.warn('Reconnect failed, retrying...');
       }
     }
 
-    console.log("Auto-reconnect failed");
     setIsDisconnected(true);
     return null;
   }, [lastDevice, maxRetries, retryDelay]);
 
-  // --- Mock read ---
+  // --- Read characteristic ---
   const readCharacteristic = useCallback(
-    async (serviceUUID: string, charUUID: string) => {
-      console.log(`Mock read from service ${serviceUUID}, char ${charUUID}`);
-      return new Promise<string>((resolve) => {
-        setTimeout(() => {
-          const randomPart = getRandomParts(connectedDevice?.name as string)
-          resolve(randomPart);
-        }, 500);
-      });
+    async (serviceUUID: string, charUUID: string): Promise<string | null> => {
+      if (!connectedDevice) return null;
+      try {
+        const char: Characteristic = await connectedDevice.readCharacteristicForService(
+          serviceUUID,
+          charUUID
+        );
+        if (char?.value) {
+          return Buffer.from(char.value, 'base64').toString('utf-8');
+        }
+        return null;
+      } catch (err) {
+        console.error('Read error:', err);
+        return null;
+      }
     },
-    []
+    [connectedDevice]
   );
 
-  // --- Mock subscription ---
+  // --- Subscribe to characteristic ---
   const subscribeToCharacteristic = useCallback(
     (
       serviceUUID: string,
       charUUID: string,
       callback: (value: string) => void
     ): (() => void) | null => {
-      if (!connectedDevice) {
-        console.warn("No device connected for subscription");
-        return null;
-      }
-
+      if (!connectedDevice) return null;
       const key = `${serviceUUID}-${charUUID}`;
 
-      if (activeSubscriptions.current[key] != null) {
-        return () => { };
+      if (activeSubscriptions.current[key]) {
+        return () => {};
       }
 
-      //let counter = 0;
-      const intervalId = setInterval(() => {
-        //counter++;
-        //callback(`mock-value-${counter}`);
-        callback(getRandomParts(connectedDevice?.name as string))
-      }, 3000);
+      const sub = connectedDevice.monitorCharacteristicForService(
+        serviceUUID,
+        charUUID,
+        (error, char) => {
+          if (error) {
+            console.error('Subscribe error:', error);
+            return;
+          }
+          if (char?.value) {
+            const decoded = Buffer.from(char.value, 'base64').toString('utf-8');
+            callback(decoded);
+          }
+        }
+      );
 
-      activeSubscriptions.current[key] = intervalId as unknown as number;
+      activeSubscriptions.current[key] = sub;
 
       return () => {
-        const id = activeSubscriptions.current[key];
-        if (id != null) {
-          clearInterval(id);
-          delete activeSubscriptions.current[key];
-        }
+        sub.remove();
+        delete activeSubscriptions.current[key];
       };
     },
     [connectedDevice]
   );
 
-  // --- Simulate random disconnects + auto-reconnect ---
+  // --- Monitor disconnections ---
   useEffect(() => {
     if (!connectedDevice) return;
 
-    const timer = setInterval(() => {
-      if (Math.random() < 0.2) { // 20% chance every 10s
-        console.log("Mock random disconnect occurred");
-        setConnectedDevice(null);
-        setIsDisconnected(true);
-        retryConnection();
-      }
-    }, 10000);
+    const sub = manager.onDeviceDisconnected(connectedDevice.id, () => {
+      console.warn('Device disconnected unexpectedly');
+      setConnectedDevice(null);
+      setIsDisconnected(true);
+      retryConnection();
+    });
 
-    return () => clearInterval(timer);
+    return () => {
+      sub.remove();
+    };
   }, [connectedDevice, retryConnection]);
 
-  // --- Cleanup all subscriptions on unmount ---
+  // --- Cleanup on unmount ---
   useEffect(() => {
     return () => {
-      Object.values(activeSubscriptions.current).forEach((id) => clearInterval(id));
-      activeSubscriptions.current = {};
+      console.debug('BLEProvider unmounted → cleaning up');
+      cleanupSubscriptions();
+      manager.destroy();
     };
-  }, []);
+  }, [cleanupSubscriptions]);
 
   return (
     <BLEContext.Provider
@@ -250,6 +276,6 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 export const useBLE = () => {
   const ctx = useContext(BLEContext);
-  if (!ctx) throw new Error("useBLE must be used within BLEProvider");
+  if (!ctx) throw new Error('useBLE must be used within BLEProvider');
   return ctx;
 };
